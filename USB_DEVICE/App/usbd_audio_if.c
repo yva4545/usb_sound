@@ -22,7 +22,7 @@
 #include "usbd_audio_if.h"
 
 /* USER CODE BEGIN INCLUDE */
-
+#include "audio_capture.h"
 /* USER CODE END INCLUDE */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -139,7 +139,8 @@ USBD_AUDIO_ItfTypeDef USBD_AUDIO_fops_FS =
   AUDIO_VolumeCtl_FS,
   AUDIO_MuteCtl_FS,
   AUDIO_PeriodicTC_FS,
-  AUDIO_GetState_FS
+  AUDIO_GetState_FS,
+  AudioCapture_GetPacket
 };
 
 /* Private functions ---------------------------------------------------------*/
@@ -153,6 +154,12 @@ USBD_AUDIO_ItfTypeDef USBD_AUDIO_fops_FS =
 static int8_t AUDIO_Init_FS(uint32_t AudioFreq, uint32_t Volume, uint32_t options)
 {
   /* USER CODE BEGIN 0 */
+  if (AudioFreq != USBD_AUDIO_FREQ)
+  {
+    return USBD_FAIL;
+  }
+  AudioCapture_SetStreaming(0U);
+  AudioCapture_SetMute(0U);
   return (USBD_OK);
   /* USER CODE END 0 */
 }
@@ -165,6 +172,7 @@ static int8_t AUDIO_Init_FS(uint32_t AudioFreq, uint32_t Volume, uint32_t option
 static int8_t AUDIO_DeInit_FS(uint32_t options)
 {
   /* USER CODE BEGIN 1 */
+  AudioCapture_SetStreaming(0U);
   return (USBD_OK);
   /* USER CODE END 1 */
 }
@@ -182,10 +190,15 @@ static int8_t AUDIO_AudioCmd_FS(uint8_t* pbuf, uint32_t size, uint8_t cmd)
   switch(cmd)
   {
     case AUDIO_CMD_START:
+      AudioCapture_SetStreaming(1U);
     break;
 
-    case AUDIO_CMD_PLAY:
+    case AUDIO_CMD_STOP:
+      AudioCapture_SetStreaming(0U);
     break;
+
+    default:
+      return USBD_FAIL;
   }
   return (USBD_OK);
   /* USER CODE END 2 */
@@ -211,6 +224,7 @@ static int8_t AUDIO_VolumeCtl_FS(uint8_t vol)
 static int8_t AUDIO_MuteCtl_FS(uint8_t cmd)
 {
   /* USER CODE BEGIN 4 */
+  AudioCapture_SetMute(cmd);
   return (USBD_OK);
   /* USER CODE END 4 */
 }
@@ -245,7 +259,7 @@ static int8_t AUDIO_GetState_FS(void)
 void TransferComplete_CallBack_FS(void)
 {
   /* USER CODE BEGIN 7 */
-  USBD_AUDIO_Sync(&hUsbDeviceFS, AUDIO_OFFSET_FULL);
+  /* ADC DMA capture is handled by HAL_ADC_ConvCpltCallback. */
   /* USER CODE END 7 */
 }
 
@@ -256,7 +270,7 @@ void TransferComplete_CallBack_FS(void)
 void HalfTransfer_CallBack_FS(void)
 {
   /* USER CODE BEGIN 8 */
-  USBD_AUDIO_Sync(&hUsbDeviceFS, AUDIO_OFFSET_HALF);
+  /* ADC DMA capture is handled by HAL_ADC_ConvHalfCpltCallback. */
   /* USER CODE END 8 */
 }
 

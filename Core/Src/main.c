@@ -26,7 +26,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "audio_capture.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -36,8 +36,6 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-/* Global Variables */
-#define AUDIO_SAMPLE_BATCH 96 // 48 samples per channel * 2 channels = 96 half-words (1ms of data)
 
 /* USER CODE END PD */
 
@@ -49,9 +47,6 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-uint16_t adc_raw_buffer[AUDIO_SAMPLE_BATCH * 2]; // Double buffer layout (Size: 192)
-uint8_t usb_audio_packet[192];                  // 48 samples * 2 channels * 2 bytes = 192 bytes
-volatile uint8_t usb_tx_ready = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -62,37 +57,6 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-void Process_Audio_Data(uint32_t buffer_offset)
-{
-  int usb_idx = 0;
-  for (int i = 0; i < AUDIO_SAMPLE_BATCH; i += 2)
-  {
-    // Read raw 12-bit channel data and scale it to 16-bit PCM
-    int16_t left_channel  = (int16_t)(adc_raw_buffer[buffer_offset + i] << 4);
-    int16_t right_channel = (int16_t)(adc_raw_buffer[buffer_offset + i + 1] << 4);
-
-    // Pack into the standard byte array (Little Endian)
-    usb_audio_packet[usb_idx++] = (uint8_t)(left_channel & 0xFF);
-    usb_audio_packet[usb_idx++] = (uint8_t)((left_channel >> 8) & 0xFF);
-    usb_audio_packet[usb_idx++] = (uint8_t)(right_channel & 0xFF);
-    usb_audio_packet[usb_idx++] = (uint8_t)((right_channel >> 8) & 0xFF);
-  }
-  
-  // Send the 192-byte packet over the USB Isochronous IN endpoint
-  USBD_LL_Transmit(&hUsbDeviceFS, AUDIO_IN_EP, usb_audio_packet, 192);
-}
-
-// First half of buffer is full
-void HAL_ADC_ConvHalfCpltCallback(ADC_HandleTypeDef* hadc)
-{
-  Process_Audio_Data(0);
-}
-
-// Second half of buffer is full
-void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
-{
-  Process_Audio_Data(AUDIO_SAMPLE_BATCH);
-}
 
 /* USER CODE END 0 */
 
@@ -130,9 +94,7 @@ int main(void)
   MX_USB_DEVICE_Init();
   MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
-/* Inside main(), after all MX_ Init functions */
-  HAL_TIM_Base_Start(&htim3); // Start the 48kHz trigger timer
-  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_raw_buffer, AUDIO_SAMPLE_BATCH * 2); 
+  AudioCapture_Init();
 
   /* USER CODE END 2 */
 

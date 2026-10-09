@@ -80,7 +80,9 @@ void HAL_PCD_MspInit(PCD_HandleTypeDef* pcdHandle)
     HAL_NVIC_SetPriority(USB_LP_CAN1_RX0_IRQn, 0, 0);
     HAL_NVIC_EnableIRQ(USB_LP_CAN1_RX0_IRQn);
   /* USER CODE BEGIN USB_MspInit 1 */
-
+    /* Isochronous endpoint completions can use the high-priority USB vector. */
+    HAL_NVIC_SetPriority(USB_HP_CAN1_TX_IRQn, 0, 0);
+    HAL_NVIC_EnableIRQ(USB_HP_CAN1_TX_IRQn);
   /* USER CODE END USB_MspInit 1 */
   }
 }
@@ -99,7 +101,7 @@ void HAL_PCD_MspDeInit(PCD_HandleTypeDef* pcdHandle)
     HAL_NVIC_DisableIRQ(USB_LP_CAN1_RX0_IRQn);
 
   /* USER CODE BEGIN USB_MspDeInit 1 */
-
+    HAL_NVIC_DisableIRQ(USB_HP_CAN1_TX_IRQn);
   /* USER CODE END USB_MspDeInit 1 */
   }
 }
@@ -329,8 +331,12 @@ USBD_StatusTypeDef USBD_LL_Init(USBD_HandleTypeDef *pdev)
   HAL_PCD_RegisterIsoInIncpltCallback(&hpcd_USB_FS, PCD_ISOINIncompleteCallback);
 #endif /* USE_HAL_PCD_REGISTER_CALLBACKS */
   /* USER CODE BEGIN EndPoint_Configuration */
-  HAL_PCDEx_PMAConfig((PCD_HandleTypeDef*)pdev->pData , 0x00 , PCD_SNG_BUF, 0x18);
-  HAL_PCDEx_PMAConfig((PCD_HandleTypeDef*)pdev->pData , 0x80 , PCD_SNG_BUF, 0x58);
+  /* Reserve 0x00..0x3f for the endpoint table, then two EP0 buffers.
+   * EP1 IN occupies 0xc0..0x183 (196 bytes), within the F103's 512-byte PMA.
+   */
+  HAL_PCDEx_PMAConfig((PCD_HandleTypeDef*)pdev->pData, 0x00, PCD_SNG_BUF, 0x40);
+  HAL_PCDEx_PMAConfig((PCD_HandleTypeDef*)pdev->pData, 0x80, PCD_SNG_BUF, 0x80);
+  HAL_PCDEx_PMAConfig((PCD_HandleTypeDef*)pdev->pData, AUDIO_IN_EP, PCD_SNG_BUF, 0xc0);
   /* USER CODE END EndPoint_Configuration */
   return USBD_OK;
 }
@@ -584,17 +590,13 @@ void USBD_LL_Delay(uint32_t Delay)
   */
 void *USBD_static_malloc(uint32_t size)
 {
-  /* static uint8_t mem[sizeof(USBD_AUDIO_HandleTypeDef)]; */
   /* USER CODE BEGIN 4 */
-  /**
-  * To compute the request size you must use the formula:
-    AUDIO_OUT_PACKET = (USBD_AUDIO_FREQ * 2 * 2) /1000)
-    AUDIO_TOTAL_BUF_SIZE = AUDIO_OUT_PACKET * AUDIO_OUT_PACKET_NUM with
-	Number of sub-packets in the audio transfer buffer. You can modify this value but always make sure
-    that it is an even number and higher than 3
-	AUDIO_OUT_PACKET_NUM = 80
-  */
-  static uint8_t mem[512];
+  /* Word storage provides alignment and preserves the generated return below. */
+  static uint32_t mem[(sizeof(USBD_AUDIO_HandleTypeDef) + 3U) / 4U];
+  if (size > sizeof(mem))
+  {
+    return NULL;
+  }
   /* USER CODE END 4 */
   return mem;
 }

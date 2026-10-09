@@ -47,11 +47,11 @@ extern "C" {
 #endif /* USBD_AUDIO_FREQ */
 
 #ifndef USBD_MAX_NUM_INTERFACES
-#define USBD_MAX_NUM_INTERFACES                       1U
+#define USBD_MAX_NUM_INTERFACES                       2U
 #endif /* USBD_AUDIO_FREQ */
 
-#define AUDIO_OUT_EP                                  0x01U
-#define USB_AUDIO_CONFIG_DESC_SIZ                     0x6DU
+#define AUDIO_IN_EP                                   0x81U
+#define USB_AUDIO_CONFIG_DESC_SIZ                     0x6EU
 #define AUDIO_INTERFACE_DESC_SIZE                     0x09U
 #define USB_AUDIO_DESC_SIZ                            0x09U
 #define AUDIO_STANDARD_ENDPOINT_DESC_SIZE             0x09U
@@ -89,17 +89,17 @@ extern "C" {
 #define AUDIO_REQ_GET_CUR                             0x81U
 #define AUDIO_REQ_SET_CUR                             0x01U
 
-#define AUDIO_OUT_STREAMING_CTRL                      0x02U
+#define AUDIO_FEATURE_UNIT_ID                         0x02U
 
 
-#define AUDIO_OUT_PACKET                              (uint16_t)(((USBD_AUDIO_FREQ * 2U * 2U) / 1000U))
+#define AUDIO_CHANNELS                                2U
+#define AUDIO_BYTES_PER_SAMPLE                        2U
+#define AUDIO_FRAME_BYTES                             (AUDIO_CHANNELS * AUDIO_BYTES_PER_SAMPLE)
+#define AUDIO_SAMPLES_PER_PACKET                      (USBD_AUDIO_FREQ / 1000U)
+#define AUDIO_IN_PACKET                               (AUDIO_SAMPLES_PER_PACKET * AUDIO_FRAME_BYTES)
+/* An asynchronous source occasionally sends one extra stereo sample frame. */
+#define AUDIO_IN_MAX_PACKET                           ((AUDIO_SAMPLES_PER_PACKET + 1U) * AUDIO_FRAME_BYTES)
 #define AUDIO_DEFAULT_VOLUME                          70U
-
-/* Number of sub-packets in the audio transfer buffer. You can modify this value but always make sure
-  that it is an even number and higher than 3 */
-#define AUDIO_OUT_PACKET_NUM                          80U
-/* Total size of the audio transfer buffer */
-#define AUDIO_TOTAL_BUF_SIZE                          ((uint16_t)(AUDIO_OUT_PACKET * AUDIO_OUT_PACKET_NUM))
 
 /* Audio Commands enumeration */
 typedef enum
@@ -140,11 +140,9 @@ USBD_AUDIO_ControlTypeDef;
 typedef struct
 {
   uint32_t                  alt_setting;
-  uint8_t                   buffer[AUDIO_TOTAL_BUF_SIZE];
-  AUDIO_OffsetTypeDef       offset;
-  uint8_t                    rd_enable;
-  uint16_t                   rd_ptr;
-  uint16_t                   wr_ptr;
+  uint8_t                   buffer[AUDIO_IN_MAX_PACKET];
+  uint8_t                   tx_busy;
+  uint8_t                   mute;
   USBD_AUDIO_ControlTypeDef control;
 }
 USBD_AUDIO_HandleTypeDef;
@@ -159,6 +157,7 @@ typedef struct
   int8_t (*MuteCtl)(uint8_t cmd);
   int8_t (*PeriodicTC)(uint8_t cmd);
   int8_t (*GetState)(void);
+  uint16_t (*GetPacket)(uint8_t *pbuf, uint16_t capacity);
 } USBD_AUDIO_ItfTypeDef;
 /**
   * @}
