@@ -68,7 +68,7 @@
 #define USBD_PID_FS     22336
 #define USBD_PRODUCT_STRING_FS     "STM32 USB Audio Input"
 #define USBD_CONFIGURATION_STRING_FS     "Audio Capture"
-#define USBD_INTERFACE_STRING_FS     "Stereo Audio Input"
+#define USBD_INTERFACE_STRING_FS     "3-Channel Audio Input"
 
 /* USER CODE BEGIN PRIVATE_DEFINES */
 

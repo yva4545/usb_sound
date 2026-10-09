@@ -32,7 +32,7 @@ int HAL_ADCEx_Calibration_Start(ADC_HandleTypeDef *adc)
 int HAL_ADC_Start_DMA(ADC_HandleTypeDef *adc, uint32_t *buffer, uint32_t length)
 {
   assert(adc == &hadc1 && init_order++ == 1U);
-  assert(buffer == (uint32_t *)adc_dma_buffer && length == 192U);
+  assert(buffer == (uint32_t *)adc_dma_buffer && length == 288U);
   return HAL_OK;
 }
 int HAL_TIM_Base_Start(TIM_HandleTypeDef *timer)
@@ -45,7 +45,7 @@ USBD_StatusTypeDef USBD_LL_OpenEP(USBD_HandleTypeDef *dev, uint8_t ep,
                                  uint8_t type, uint16_t size)
 {
   UNUSED(dev);
-  assert(ep == 0x81U && type == USBD_EP_TYPE_ISOC && size == 196U);
+  assert(ep == 0x81U && type == USBD_EP_TYPE_ISOC && size == 294U);
   assert(endpoint_open == 0U);
   endpoint_open = 1U;
   return USBD_OK;
@@ -135,12 +135,13 @@ static void assert_silence(const uint8_t *bytes, uint16_t length)
     assert(bytes[i] == 0U);
   }
 }
-static void fill_dma(uint16_t left, uint16_t right)
+static void fill_dma(uint16_t left, uint16_t right, uint16_t center)
 {
-  for (unsigned i = 0U; i < 2U * ADC_BATCH_SAMPLES; i += 2U)
+  for (unsigned i = 0U; i < 2U * ADC_BATCH_SAMPLES; i += 3U)
   {
     adc_dma_buffer[i] = left;
     adc_dma_buffer[i + 1U] = right;
+    adc_dma_buffer[i + 2U] = center;
   }
 }
 
@@ -152,7 +153,7 @@ static void test_descriptors(void)
   unsigned interface = 0U;
   unsigned endpoints = 0U;
   unsigned input_seen = 0U, feature_seen = 0U, output_seen = 0U, format_seen = 0U;
-  assert(length == 110U && le16(desc + 2U) == length && desc[4] == 2U);
+  assert(length == 111U && le16(desc + 2U) == length && desc[4] == 2U);
   while (offset < length)
   {
     uint8_t *d = desc + offset;
@@ -166,7 +167,7 @@ static void test_descriptors(void)
     else if (d[1] == USB_DESC_TYPE_ENDPOINT)
     {
       assert(interface == 1U && d[2] == 0x81U && d[3] == 0x05U);
-      assert(le16(d + 4U) == 196U && d[6] == 1U);
+      assert(le16(d + 4U) == 294U && d[6] == 1U);
       ++endpoints;
     }
     else if (d[1] == AUDIO_INTERFACE_DESCRIPTOR_TYPE && interface == 0U)
@@ -174,16 +175,16 @@ static void test_descriptors(void)
       switch (d[2])
       {
         case AUDIO_CONTROL_HEADER:
-          assert(le16(d + 5U) == 40U && d[8] == 1U);
+          assert(le16(d + 5U) == 41U && d[8] == 1U);
           break;
         case AUDIO_CONTROL_INPUT_TERMINAL:
           assert(d[3] == 1U && le16(d + 4U) == 0x0603U);
-          assert(d[7] == 2U && le16(d + 8U) == 3U);
+          assert(d[7] == 3U && le16(d + 8U) == 7U);
           ++input_seen;
           break;
         case AUDIO_CONTROL_FEATURE_UNIT:
-          assert(d[0] == 10U && d[3] == 2U && d[4] == 1U && d[6] == 1U);
-          assert(d[7] == 0U && d[8] == 0U);
+          assert(d[0] == 11U && d[3] == 2U && d[4] == 1U && d[5] == 1U && d[6] == 1U);
+          assert(d[7] == 0U && d[8] == 0U && d[9] == 0U && d[10] == 0U);
           ++feature_seen;
           break;
         case AUDIO_CONTROL_OUTPUT_TERMINAL:
@@ -200,7 +201,7 @@ static void test_descriptors(void)
       }
       else if (d[2] == AUDIO_STREAMING_FORMAT_TYPE)
       {
-        assert(d[3] == 1U && d[4] == 2U && d[5] == 2U && d[6] == 16U);
+        assert(d[3] == 1U && d[4] == 3U && d[5] == 2U && d[6] == 16U);
         assert(d[7] == 1U && (le16(d + 8U) | ((uint32_t)d[10] << 16)) == 48000U);
         ++format_seen;
       }
@@ -223,7 +224,7 @@ static void test_usb_lifecycle(void)
   assert(USBD_AUDIO.Setup(&dev, &request) == USBD_OK);
   assert(endpoint_open == 1U && dev.ep_in[1].is_used == 1U);
   USBD_AUDIO.SOF(&dev);
-  assert(transmissions == 1U && transmitted_length == 192U);
+  assert(transmissions == 1U && transmitted_length == 288U);
   assert_silence(transmitted, transmitted_length);
   /* No completion: the next SOF must recover rather than deadlock. */
   USBD_AUDIO.SOF(&dev);
@@ -272,18 +273,20 @@ static void test_capture(void)
   assert(init_order == 3U);
   AudioCapture_SetStreaming(1U);
   AudioCapture_SetMute(0U);
-  fill_dma(0U, 4095U);
+  fill_dma(0U, 4095U, 2304U);
   HAL_ADC_ConvHalfCpltCallback(&hadc1);
-  assert(AudioCapture_GetPacket(packet, sizeof(packet)) == 192U);
-  assert_silence(packet, 192U); /* Startup waits for three batches. */
+  assert(AudioCapture_GetPacket(packet, sizeof(packet)) == 288U);
+  assert_silence(packet, 288U); /* Startup waits for three batches. */
   HAL_ADC_ConvCpltCallback(&hadc1);
-  assert(AudioCapture_GetPacket(packet, sizeof(packet)) == 192U);
-  assert_silence(packet, 192U);
+  assert(AudioCapture_GetPacket(packet, sizeof(packet)) == 288U);
+  assert_silence(packet, 288U);
   HAL_ADC_ConvHalfCpltCallback(&hadc1);
   size = AudioCapture_GetPacket(packet, sizeof(packet));
-  for (unsigned i = 0U; i < size; i += 4U)
+  assert(size == 288U);
+  for (unsigned i = 0U; i < size; i += 6U)
   {
     assert(le16(packet + i) == 0x8000U && le16(packet + i + 2U) == 0x7FF0U);
+    assert(le16(packet + i + 4U) == 0x1000U);
   }
   AudioCapture_SetMute(1U);
   HAL_ADC_ConvHalfCpltCallback(&hadc1);
@@ -291,23 +294,23 @@ static void test_capture(void)
   assert_silence(packet, size);
   AudioCapture_SetMute(0U);
   AudioCapture_SetStreaming(1U);
-  fill_dma(2048U, 2048U);
+  fill_dma(2048U, 2048U, 2048U);
   HAL_ADC_ConvHalfCpltCallback(&hadc1);
   HAL_ADC_ConvCpltCallback(&hadc1);
   HAL_ADC_ConvHalfCpltCallback(&hadc1);
-  assert(AudioCapture_GetPacket(packet, sizeof(packet)) == 192U);
-  assert_silence(packet, 192U); /* Mid-supply must be zero in signed PCM. */
+  assert(AudioCapture_GetPacket(packet, sizeof(packet)) == 288U);
+  assert_silence(packet, 288U); /* Mid-supply must be zero in signed PCM. */
 
   /* Ring wrap, underrun/re-prime, and host pause overflow stay within bounds. */
   for (unsigned i = 0U; i < 1000U; ++i)
   {
     HAL_ADC_ConvHalfCpltCallback(&hadc1);
-    assert(AudioCapture_GetPacket(packet, sizeof(packet)) == 192U);
+    assert(AudioCapture_GetPacket(packet, sizeof(packet)) == 288U);
   }
   for (unsigned i = 0U; i < 10U; ++i)
   {
     size = AudioCapture_GetPacket(packet, sizeof(packet));
-    assert(size == 188U || size == 192U);
+    assert(size == 282U || size == 288U);
   }
   HAL_ADC_ConvHalfCpltCallback(&hadc1);
   HAL_ADC_ConvCpltCallback(&hadc1);
@@ -316,11 +319,61 @@ static void test_capture(void)
   {
     HAL_ADC_ConvHalfCpltCallback(&hadc1);
   }
-  assert(AudioCapture_GetPacket(packet, sizeof(packet)) == 196U);
-  assert(AudioCapture_GetPacket(packet, 191U) == 0U);
+  assert(AudioCapture_GetPacket(packet, sizeof(packet)) == 294U);
+  assert(AudioCapture_GetPacket(packet, 293U) == 0U);
   AudioCapture_SetStreaming(0U);
-  assert(AudioCapture_GetPacket(packet, sizeof(packet)) == 192U);
-  assert_silence(packet, 192U);
+  assert(AudioCapture_GetPacket(packet, sizeof(packet)) == 288U);
+  assert_silence(packet, 288U);
+}
+
+static void test_channel_order(void)
+{
+  uint8_t packet[AUDIO_IN_MAX_PACKET];
+  uint32_t produced = 0U, consumed = 0U;
+  AudioCapture_SetStreaming(1U);
+  AudioCapture_SetMute(0U);
+
+  /* Distinct per-channel ramps check ordering and continuity across both DMA
+   * halves, USB packet boundaries, and repeated capture-ring wraps.
+   */
+  for (unsigned batch = 0U; batch < 500U; ++batch)
+  {
+    unsigned offset = (batch % 2U) * ADC_BATCH_SAMPLES;
+    for (unsigned frame = 0U; frame < 48U; ++frame)
+    {
+      for (unsigned channel = 0U; channel < 3U; ++channel)
+      {
+        adc_dma_buffer[offset + frame * 3U + channel] =
+          (uint16_t)(((produced + frame) % 1024U) + channel * 1024U);
+      }
+    }
+    if ((batch % 2U) == 0U)
+    {
+      HAL_ADC_ConvHalfCpltCallback(&hadc1);
+    }
+    else
+    {
+      HAL_ADC_ConvCpltCallback(&hadc1);
+    }
+    produced += 48U;
+    assert(AudioCapture_GetPacket(packet, sizeof(packet)) == 288U);
+    if (batch < 2U)
+    {
+      assert_silence(packet, 288U);
+      continue;
+    }
+    for (unsigned frame = 0U; frame < 48U; ++frame)
+    {
+      for (unsigned channel = 0U; channel < 3U; ++channel)
+      {
+        int32_t raw = (int32_t)(((consumed + frame) % 1024U) + channel * 1024U);
+        uint16_t expected = (uint16_t)((raw - 2048) * 16);
+        assert(le16(packet + frame * 6U + channel * 2U) == expected);
+      }
+    }
+    consumed += 48U;
+    assert(produced - consumed == 96U);
+  }
 }
 
 static void test_clock_drift(int ppm)
@@ -330,7 +383,7 @@ static void test_clock_drift(int ppm)
   uint64_t source_phase = 0U;
   unsigned adjusted = 0U;
   AudioCapture_SetStreaming(1U);
-  fill_dma(2200U, 1900U);
+  fill_dma(2200U, 1900U, 2304U);
   /* Simulate 60 seconds with the source oscillator +/- 1000 ppm from host SOF.
    * Sample accounting checks that rate adjustment preserves every source frame.
    */
@@ -344,12 +397,17 @@ static void test_clock_drift(int ppm)
       produced += 48U;
     }
     uint16_t size = AudioCapture_GetPacket(packet, sizeof(packet));
-    assert(size == 188U || size == 192U || size == 196U);
+    assert(size == 282U || size == 288U || size == 294U);
     if (packet[0] != 0U || packet[1] != 0U)
     {
-      assert(le16(packet) == (2200U - 2048U) * 16U);
-      consumed += size / 4U;
-      adjusted += (size != 192U);
+      for (unsigned i = 0U; i < size; i += 6U)
+      {
+        assert(le16(packet + i) == 0x0980U);
+        assert(le16(packet + i + 2U) == 0xF6C0U);
+        assert(le16(packet + i + 4U) == 0x1000U);
+      }
+      consumed += size / 6U;
+      adjusted += (size != 288U);
     }
     else
     {
@@ -367,9 +425,10 @@ int main(void)
   test_descriptors();
   test_usb_lifecycle();
   test_capture();
+  test_channel_order();
   test_clock_drift(1000);
   test_clock_drift(-1000);
   assert(irq_mask == 0U);
-  puts("USB descriptors, controls, streaming lifecycle, PCM capture and clock drift: PASS");
+  puts("USB descriptors, controls, streaming lifecycle, three-channel PCM capture and clock drift: PASS");
   return 0;
 }

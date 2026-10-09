@@ -332,8 +332,10 @@ USBD_StatusTypeDef USBD_LL_Init(USBD_HandleTypeDef *pdev)
 #endif /* USE_HAL_PCD_REGISTER_CALLBACKS */
   /* USER CODE BEGIN EndPoint_Configuration */
   /* Reserve 0x00..0x3f for the endpoint table, then two EP0 buffers.
-   * EP1 IN occupies 0xc0..0x183 (196 bytes), within the F103's 512-byte PMA.
+   * EP1 IN occupies 0xc0..0x1e5 (294 bytes), within the F103's 512-byte PMA.
    */
+  _Static_assert((0xc0U + AUDIO_IN_MAX_PACKET) <= 512U,
+                 "Audio IN endpoint exceeds the STM32F103 packet memory");
   HAL_PCDEx_PMAConfig((PCD_HandleTypeDef*)pdev->pData, 0x00, PCD_SNG_BUF, 0x40);
   HAL_PCDEx_PMAConfig((PCD_HandleTypeDef*)pdev->pData, 0x80, PCD_SNG_BUF, 0x80);
   HAL_PCDEx_PMAConfig((PCD_HandleTypeDef*)pdev->pData, AUDIO_IN_EP, PCD_SNG_BUF, 0xc0);

@@ -10,9 +10,11 @@
 #define CAPTURE_JITTER_FRAMES (AUDIO_SAMPLES_PER_PACKET / 2U)
 
 _Static_assert(USBD_AUDIO_FREQ == 48000U, "TIM3 is configured for 48 kHz capture");
-_Static_assert(AUDIO_CHANNELS == 2U, "ADC1 scans two input channels");
+_Static_assert(AUDIO_CHANNELS == 3U, "ADC1 scans three input channels");
 
-/* DMA stores interleaved PA1 (left), PA3 (right) 12-bit samples in two 1-ms halves. */
+/* DMA stores interleaved PA1 (left), PA3 (right), PA2 (center) 12-bit samples
+ * in two 1-ms halves, each holding 48 three-channel frames (144 halfwords).
+ */
 _Alignas(4) static uint16_t adc_dma_buffer[2U * ADC_BATCH_SAMPLES];
 static int16_t capture_ring[CAPTURE_RING_FRAMES * AUDIO_CHANNELS];
 static uint32_t read_frame;
@@ -23,7 +25,7 @@ static uint8_t primed;
 
 void AudioCapture_Init(void)
 {
-  /* Arm DMA before starting the timer, so the first scan is a complete stereo pair. */
+  /* Arm DMA before starting the timer, so the first scan is a complete audio frame. */
   if ((HAL_ADCEx_Calibration_Start(&hadc1) != HAL_OK) ||
       (HAL_ADC_Start_DMA(&hadc1, (uint32_t *)adc_dma_buffer,
                          2U * ADC_BATCH_SAMPLES) != HAL_OK) ||
@@ -115,7 +117,7 @@ uint16_t AudioCapture_GetPacket(uint8_t *packet, uint16_t capacity)
   }
   if (available < frames)
   {
-    /* Re-prime after a real underrun rather than sending partial stereo samples. */
+    /* Re-prime after a real underrun rather than sending partial audio frames. */
     primed = 0U;
     memset(packet, 0, AUDIO_IN_PACKET);
     __set_PRIMASK(irq_state);

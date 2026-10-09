@@ -2,7 +2,7 @@
   ******************************************************************************
   * @file    usbd_audio.c
   * @author  MCD Application Team
-  * @brief   USB Audio Class 1.0, adapted for stereo ADC capture.
+  * @brief   USB Audio Class 1.0, adapted for three-channel ADC capture.
   ******************************************************************************
   * @attention
   *
@@ -50,7 +50,7 @@ USBD_ClassTypeDef USBD_AUDIO =
   USBD_AUDIO_GetDeviceQualifierDesc,
 };
 
-/* Signal path: stereo line input (1) -> master mute (2) -> USB streaming (3).
+/* Signal path: three-channel line input (1) -> master mute (2) -> USB streaming (3).
  * Interface 0 is AudioControl; interface 1 has idle and capture alternate settings.
  */
 __ALIGN_BEGIN static uint8_t USBD_AUDIO_CfgDesc[] __ALIGN_END =
@@ -64,17 +64,17 @@ __ALIGN_BEGIN static uint8_t USBD_AUDIO_CfgDesc[] __ALIGN_END =
   0x09, USB_DESC_TYPE_INTERFACE, 0x00, 0x00, 0x00,
   USB_DEVICE_CLASS_AUDIO, AUDIO_SUBCLASS_AUDIOCONTROL, AUDIO_PROTOCOL_UNDEFINED, 0x00,
 
-  /* UAC 1.0 header; AC descriptors total 9 + 12 + 10 + 9 = 40 bytes. */
+  /* UAC 1.0 header; AC descriptors total 9 + 12 + 11 + 9 = 41 bytes. */
   0x09, AUDIO_INTERFACE_DESCRIPTOR_TYPE, AUDIO_CONTROL_HEADER,
-  0x00, 0x01, 0x28, 0x00, 0x01, 0x01,
+  0x00, 0x01, 0x29, 0x00, 0x01, 0x01,
 
-  /* Physical input terminal: line connector (0x0603), left/right stereo. */
+  /* Physical input terminal: line connector (0x0603), left/right/center. */
   0x0C, AUDIO_INTERFACE_DESCRIPTOR_TYPE, AUDIO_CONTROL_INPUT_TERMINAL,
-  0x01, 0x03, 0x06, 0x00, AUDIO_CHANNELS, 0x03, 0x00, 0x00, 0x00,
+  0x01, 0x03, 0x06, 0x00, AUDIO_CHANNELS, 0x07, 0x00, 0x00, 0x00,
 
   /* Feature unit: master mute, no individual channel controls. */
-  0x0A, AUDIO_INTERFACE_DESCRIPTOR_TYPE, AUDIO_CONTROL_FEATURE_UNIT,
-  AUDIO_FEATURE_UNIT_ID, 0x01, 0x01, AUDIO_CONTROL_MUTE, 0x00, 0x00, 0x00,
+  0x0B, AUDIO_INTERFACE_DESCRIPTOR_TYPE, AUDIO_CONTROL_FEATURE_UNIT,
+  AUDIO_FEATURE_UNIT_ID, 0x01, 0x01, AUDIO_CONTROL_MUTE, 0x00, 0x00, 0x00, 0x00,
 
   /* Output terminal: USB streaming (0x0101), sourced from feature unit 2. */
   0x09, AUDIO_INTERFACE_DESCRIPTOR_TYPE, AUDIO_CONTROL_OUTPUT_TERMINAL,
@@ -92,12 +92,12 @@ __ALIGN_BEGIN static uint8_t USBD_AUDIO_CfgDesc[] __ALIGN_END =
   0x07, AUDIO_INTERFACE_DESCRIPTOR_TYPE, AUDIO_STREAMING_GENERAL,
   0x03, 0x01, 0x01, 0x00,
 
-  /* Type I: stereo, signed 16-bit little-endian PCM at a fixed 48 kHz. */
+  /* Type I: three channels, signed 16-bit little-endian PCM at a fixed 48 kHz. */
   0x0B, AUDIO_INTERFACE_DESCRIPTOR_TYPE, AUDIO_STREAMING_FORMAT_TYPE,
   AUDIO_FORMAT_TYPE_I, AUDIO_CHANNELS, AUDIO_BYTES_PER_SAMPLE, 16, 0x01,
   AUDIO_SAMPLE_FREQ(USBD_AUDIO_FREQ),
 
-  /* Asynchronous isochronous IN, up to 49 stereo frames every 1 ms.
+  /* Asynchronous isochronous IN, up to 49 three-channel frames every 1 ms.
    * Capture packet lengths report the source clock rate; no feedback EP is needed.
    */
   0x09, USB_DESC_TYPE_ENDPOINT, AUDIO_IN_EP, 0x05,
