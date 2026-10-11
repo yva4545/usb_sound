@@ -10,5 +10,6 @@ target_include_directories(audio_host_tests PRIVATE
     ../Core/Inc
     ../Middlewares/ST/STM32_USB_Device_Library/Core/Inc
     ../Middlewares/ST/STM32_USB_Device_Library/Class/AUDIO/Inc
+    ../USB_DEVICE/Target
 )
-add_test(NAME audio_capture_and_usb COMMAND audio_host_tests)
+add_test(NAME audio_full_duplex COMMAND audio_host_tests)

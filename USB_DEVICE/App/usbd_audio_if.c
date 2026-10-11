@@ -23,6 +23,7 @@
 
 /* USER CODE BEGIN INCLUDE */
 #include "audio_capture.h"
+#include "audio_playback.h"
 /* USER CODE END INCLUDE */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -140,7 +141,11 @@ USBD_AUDIO_ItfTypeDef USBD_AUDIO_fops_FS =
   AUDIO_MuteCtl_FS,
   AUDIO_PeriodicTC_FS,
   AUDIO_GetState_FS,
-  AudioCapture_GetPacket
+  AudioCapture_GetPacket,
+  AudioPlayback_SetStreaming,
+  AudioPlayback_SetMute,
+  AudioPlayback_PushPacket,
+  AudioPlayback_GetFeedback
 };
 
 /* Private functions ---------------------------------------------------------*/
@@ -160,6 +165,8 @@ static int8_t AUDIO_Init_FS(uint32_t AudioFreq, uint32_t Volume, uint32_t option
   }
   AudioCapture_SetStreaming(0U);
   AudioCapture_SetMute(0U);
+  AudioPlayback_SetStreaming(0U);
+  AudioPlayback_SetMute(0U);
   return (USBD_OK);
   /* USER CODE END 0 */
 }
@@ -173,6 +180,7 @@ static int8_t AUDIO_DeInit_FS(uint32_t options)
 {
   /* USER CODE BEGIN 1 */
   AudioCapture_SetStreaming(0U);
+  AudioPlayback_SetStreaming(0U);
   return (USBD_OK);
   /* USER CODE END 1 */
 }

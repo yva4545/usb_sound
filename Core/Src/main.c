@@ -27,6 +27,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "audio_capture.h"
+#include "audio_playback.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -91,10 +92,13 @@ int main(void)
   MX_GPIO_Init();
   MX_DMA_Init();
   MX_ADC1_Init();
-  MX_USB_DEVICE_Init();
   MX_TIM3_Init();
+  MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
   AudioCapture_Init();
+  AudioPlayback_Init();
+  /* Start USB after both DMA paths are ready for host alternate-setting requests. */
+  MX_USB_DEVICE_Init();
 
   /* USER CODE END 2 */
 

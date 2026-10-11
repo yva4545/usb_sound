@@ -47,11 +47,15 @@ extern "C" {
 #endif /* USBD_AUDIO_FREQ */
 
 #ifndef USBD_MAX_NUM_INTERFACES
-#define USBD_MAX_NUM_INTERFACES                       2U
+#define USBD_MAX_NUM_INTERFACES                       3U
 #endif /* USBD_AUDIO_FREQ */
 
 #define AUDIO_IN_EP                                   0x81U
-#define USB_AUDIO_CONFIG_DESC_SIZ                     0x6EU
+#define AUDIO_OUT_EP                                  0x02U
+#define AUDIO_FEEDBACK_EP                             0x83U
+#define AUDIO_CAPTURE_INTERFACE                       1U
+#define AUDIO_PLAYBACK_INTERFACE                      2U
+#define USB_AUDIO_CONFIG_DESC_SIZ                     0xCBU
 #define AUDIO_INTERFACE_DESC_SIZE                     0x09U
 #define USB_AUDIO_DESC_SIZ                            0x09U
 #define AUDIO_STANDARD_ENDPOINT_DESC_SIZE             0x09U
@@ -90,6 +94,7 @@ extern "C" {
 #define AUDIO_REQ_SET_CUR                             0x01U
 
 #define AUDIO_FEATURE_UNIT_ID                         0x02U
+#define AUDIO_PLAYBACK_FEATURE_UNIT_ID                0x05U
 
 
 #define AUDIO_CHANNELS                                2U
@@ -99,6 +104,10 @@ extern "C" {
 #define AUDIO_IN_PACKET                               (AUDIO_SAMPLES_PER_PACKET * AUDIO_FRAME_BYTES)
 /* An asynchronous source occasionally sends one extra stereo sample frame. */
 #define AUDIO_IN_MAX_PACKET                           ((AUDIO_SAMPLES_PER_PACKET + 1U) * AUDIO_FRAME_BYTES)
+#define AUDIO_OUT_MAX_PACKET                          AUDIO_IN_MAX_PACKET
+/* F103 RX buffers larger than 62 bytes are allocated in 32-byte blocks. */
+#define AUDIO_OUT_BUFFER_BYTES                        ((AUDIO_OUT_MAX_PACKET + 31U) & ~31U)
+#define AUDIO_FEEDBACK_BYTES                          3U
 #define AUDIO_DEFAULT_VOLUME                          70U
 
 /* Audio Commands enumeration */
@@ -140,9 +149,17 @@ USBD_AUDIO_ControlTypeDef;
 typedef struct
 {
   uint32_t                  alt_setting;
+  uint32_t                  playback_alt_setting;
   uint8_t                   buffer[AUDIO_IN_MAX_PACKET];
+  /* Receive capacity includes hardware rounding, so malformed packets cannot
+   * overflow the software buffer before DataOut validates their PCM length.
+   */
+  uint8_t                   out_buffer[AUDIO_OUT_BUFFER_BYTES];
+  uint8_t                   feedback[AUDIO_FEEDBACK_BYTES];
   uint8_t                   tx_busy;
+  uint8_t                   feedback_busy;
   uint8_t                   mute;
+  uint8_t                   playback_mute;
   USBD_AUDIO_ControlTypeDef control;
 }
 USBD_AUDIO_HandleTypeDef;
@@ -158,6 +175,10 @@ typedef struct
   int8_t (*PeriodicTC)(uint8_t cmd);
   int8_t (*GetState)(void);
   uint16_t (*GetPacket)(uint8_t *pbuf, uint16_t capacity);
+  void (*PlaybackSetStreaming)(uint8_t enabled);
+  void (*PlaybackMuteCtl)(uint8_t enabled);
+  uint8_t (*PutPacket)(const uint8_t *pbuf, uint16_t length);
+  uint32_t (*GetFeedback)(void);
 } USBD_AUDIO_ItfTypeDef;
 /**
   * @}

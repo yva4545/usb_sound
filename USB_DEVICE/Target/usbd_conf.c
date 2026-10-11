@@ -26,6 +26,7 @@
 #include "usbd_audio.h"
 
 /* USER CODE BEGIN Includes */
+#include "audio_usb_pma.h"
 
 /* USER CODE END Includes */
 
@@ -305,7 +306,7 @@ USBD_StatusTypeDef USBD_LL_Init(USBD_HandleTypeDef *pdev)
   pdev->pData = &hpcd_USB_FS;
 
   hpcd_USB_FS.Instance = USB;
-  hpcd_USB_FS.Init.dev_endpoints = 8;
+  hpcd_USB_FS.Init.dev_endpoints = 4;
   hpcd_USB_FS.Init.speed = PCD_SPEED_FULL;
   hpcd_USB_FS.Init.low_power_enable = DISABLE;
   hpcd_USB_FS.Init.lpm_enable = DISABLE;
@@ -331,12 +332,20 @@ USBD_StatusTypeDef USBD_LL_Init(USBD_HandleTypeDef *pdev)
   HAL_PCD_RegisterIsoInIncpltCallback(&hpcd_USB_FS, PCD_ISOINIncompleteCallback);
 #endif /* USE_HAL_PCD_REGISTER_CALLBACKS */
   /* USER CODE BEGIN EndPoint_Configuration */
-  /* Reserve 0x00..0x3f for the endpoint table, then two EP0 buffers.
-   * EP1 IN occupies 0xc0..0x183 (196 bytes), within the F103's 512-byte PMA.
+  /* 488 bytes: BTABLE 32, EP0 2*16, capture 196, playback 224, feedback 4.
+   * F103 ISO always swaps logical slots. Alias both slots to one physical buffer
+   * per endpoint and use the HAL's DTOG-aware double-buffer ISO code. At most
+   * one transaction per endpoint/frame; IRQs must copy/rearm before the next one.
+   * IN completion clears the consumed slot's count; SOF retires unpolled IN data.
    */
-  HAL_PCDEx_PMAConfig((PCD_HandleTypeDef*)pdev->pData, 0x00, PCD_SNG_BUF, 0x40);
-  HAL_PCDEx_PMAConfig((PCD_HandleTypeDef*)pdev->pData, 0x80, PCD_SNG_BUF, 0x80);
-  HAL_PCDEx_PMAConfig((PCD_HandleTypeDef*)pdev->pData, AUDIO_IN_EP, PCD_SNG_BUF, 0xc0);
+  HAL_PCDEx_PMAConfig(&hpcd_USB_FS, 0x00, PCD_SNG_BUF, AUDIO_PMA_EP0_OUT);
+  HAL_PCDEx_PMAConfig(&hpcd_USB_FS, 0x80, PCD_SNG_BUF, AUDIO_PMA_EP0_IN);
+  HAL_PCDEx_PMAConfig(&hpcd_USB_FS, AUDIO_IN_EP, PCD_DBL_BUF,
+                      AUDIO_PMA_ISO_SLOTS(AUDIO_PMA_CAPTURE));
+  HAL_PCDEx_PMAConfig(&hpcd_USB_FS, AUDIO_OUT_EP, PCD_DBL_BUF,
+                      AUDIO_PMA_ISO_SLOTS(AUDIO_PMA_PLAYBACK));
+  HAL_PCDEx_PMAConfig(&hpcd_USB_FS, AUDIO_FEEDBACK_EP, PCD_DBL_BUF,
+                      AUDIO_PMA_ISO_SLOTS(AUDIO_PMA_FEEDBACK));
   /* USER CODE END EndPoint_Configuration */
   return USBD_OK;
 }
@@ -406,6 +415,16 @@ USBD_StatusTypeDef USBD_LL_OpenEP(USBD_HandleTypeDef *pdev, uint8_t ep_addr, uin
   USBD_StatusTypeDef usb_status = USBD_OK;
 
   hal_status = HAL_PCD_EP_Open(pdev->pData, ep_addr, ep_mps, ep_type);
+
+  if ((hal_status == HAL_OK) && (ep_type == USBD_EP_TYPE_ISOC) &&
+      ((ep_addr & 0x80U) != 0U))
+  {
+    /* Retired/reopened IN endpoints must not retain an old logical-slot count. */
+    PCD_HandleTypeDef *pcd = (PCD_HandleTypeDef *)pdev->pData;
+    uint8_t number = ep_addr & 0x0FU;
+    PCD_SET_EP_DBUF0_CNT(pcd->Instance, number, 1U, 0U);
+    PCD_SET_EP_DBUF1_CNT(pcd->Instance, number, 1U, 0U);
+  }
 
   usb_status =  USBD_Get_USB_Status(hal_status);
 

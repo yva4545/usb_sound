@@ -58,6 +58,7 @@
 extern PCD_HandleTypeDef hpcd_USB_FS;
 extern DMA_HandleTypeDef hdma_adc1;
 /* USER CODE BEGIN EV */
+extern DMA_HandleTypeDef hdma_tim1_up;
 
 /* USER CODE END EV */
 
@@ -240,4 +241,8 @@ void USB_LP_CAN1_RX0_IRQHandler(void)
 }
 
 /* USER CODE BEGIN 1 */
+void DMA1_Channel5_IRQHandler(void)
+{
+  HAL_DMA_IRQHandler(&hdma_tim1_up);
+}
 /* USER CODE END 1 */

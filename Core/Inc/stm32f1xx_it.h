@@ -59,6 +59,7 @@ void DMA1_Channel1_IRQHandler(void);
 void USB_HP_CAN1_TX_IRQHandler(void);
 void USB_LP_CAN1_RX0_IRQHandler(void);
 /* USER CODE BEGIN EFP */
+void DMA1_Channel5_IRQHandler(void);
 /* USER CODE END EFP */
 
 #ifdef __cplusplus

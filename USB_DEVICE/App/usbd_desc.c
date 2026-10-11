@@ -66,9 +66,9 @@
 #define USBD_LANGID_STRING     1033
 #define USBD_MANUFACTURER_STRING     "STMicroelectronics"
 #define USBD_PID_FS     22336
-#define USBD_PRODUCT_STRING_FS     "STM32 USB Audio Input"
-#define USBD_CONFIGURATION_STRING_FS     "Audio Capture"
-#define USBD_INTERFACE_STRING_FS     "Stereo Audio Input"
+#define USBD_PRODUCT_STRING_FS     "STM32 USB Audio Card"
+#define USBD_CONFIGURATION_STRING_FS     "Stereo Capture and Playback"
+#define USBD_INTERFACE_STRING_FS     "Stereo Audio"
 
 /* USER CODE BEGIN PRIVATE_DEFINES */
 
