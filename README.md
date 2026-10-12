@@ -1,3 +1,13 @@
+# Overview
+
+This project presents a simple reusable audio card, which can be made working with 
+STM32F103 blue-pill board with minimal extra hardware. 
+
+This might be useful for projects that needs audio Linux/Windows stack for various purposes,
+like waveform generation, waveform observation, enabling audio input on old  Raspberry Pis, etc.
+
+See the section Manual verification for what is working and what is not.
+
 # STM32F103 full-duplex USB audio card
 
 USB Audio Class 1.0 capture/playback device for the STM32F103CBTx configured in
@@ -165,6 +175,8 @@ must suit the following stage.
 
 See [Filtering.md](Filtering.md) for the passive reconstruction-filter design,
 component/load assumptions, and the `filter_analysis.py` calculation tool.
+See [ActiveFiltering.md](ActiveFiltering.md) for the two-stage LM324N active
+filter, `filter.cir` SPICE simulation, and simulated audio/image response.
 
 ## Verification
 
@@ -206,6 +218,19 @@ aplay -D hw:N,0 playback.wav
 # Or generate left/right test tones through ALSA:
 speaker-test -D hw:N,0 -F S16_LE -r 48000 -c 2 -t sine
 ```
+
+## Results of manual verification
+
+I've not yet build extensive filters suggested by the AI. I've tested the audio output
+with a simple RC filter with bandwidth around 20kHz (1 k resistor and 7.5 n capacitor)
+ followed by simple op-amp amplifier to a headphone. The result is legible speech.
+
+I've also tested arecord command with a sine wave from the audio generator (shifted to 1.5 V),
+analised the result with audacity. The sine wave seems to be recorded properly.
+
+Tested the simultaneous recording and speech output, here I observed screachy sound and 
+occasional spikes in recorded sine wave. So the full duplex usage does not pass the
+manual test.
 
 ## STM32CubeMX regeneration
 
