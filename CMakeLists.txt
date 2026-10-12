@@ -48,6 +48,12 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/audio_playback.c
 )
 
+# Audio ring conversion and PWM generation share a 1-ms duplex deadline.
+# Unoptimized (-O0) Debug audio glitches in duplex on hardware; keep these hot
+# paths optimized while retaining Debug's symbols for profiling/debugging.
+set_property(SOURCE Core/Src/audio_capture.c Core/Src/audio_playback.c APPEND
+    PROPERTY COMPILE_OPTIONS "$<$<CONFIG:Debug>:-O2>")
+
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths

@@ -148,6 +148,13 @@ static void PCD_DataInStageCallback(PCD_HandleTypeDef *hpcd, uint8_t epnum)
 void HAL_PCD_DataInStageCallback(PCD_HandleTypeDef *hpcd, uint8_t epnum)
 #endif /* USE_HAL_PCD_REGISTER_CALLBACKS */
 {
+  if (hpcd->IN_ep[epnum].type == EP_TYPE_ISOC)
+  {
+    /* ISO remains VALID after completion. The audio slots alias one buffer, so
+     * stop unsolicited empty transfers while the next packet is prepared.
+     */
+    PCD_SET_EP_TX_STATUS(hpcd->Instance, epnum, USB_EP_TX_DIS);
+  }
   USBD_LL_DataInStage((USBD_HandleTypeDef*)hpcd->pData, epnum, hpcd->IN_ep[epnum].xfer_buff);
 }
 
@@ -442,7 +449,22 @@ USBD_StatusTypeDef USBD_LL_CloseEP(USBD_HandleTypeDef *pdev, uint8_t ep_addr)
   HAL_StatusTypeDef hal_status = HAL_OK;
   USBD_StatusTypeDef usb_status = USBD_OK;
 
+  PCD_HandleTypeDef *pcd = (PCD_HandleTypeDef *)pdev->pData;
+  uint8_t number = ep_addr & 0x0FU;
+  uint8_t iso_in = ((ep_addr & 0x80U) != 0U) &&
+                   (pcd->IN_ep[number].type == EP_TYPE_ISOC);
+  if (iso_in != 0U)
+  {
+    /* Gate hardware before HAL resets DTOG. A late poll of a retired packet
+     * must not leave a completion for the endpoint we are about to reopen.
+     */
+    PCD_SET_EP_TX_STATUS(pcd->Instance, number, USB_EP_TX_DIS);
+  }
   hal_status = HAL_PCD_EP_Close(pdev->pData, ep_addr);
+  if (iso_in != 0U)
+  {
+    PCD_CLEAR_TX_EP_CTR(pcd->Instance, number);
+  }
 
   usb_status =  USBD_Get_USB_Status(hal_status);
 
@@ -554,11 +576,25 @@ USBD_StatusTypeDef USBD_LL_Transmit(USBD_HandleTypeDef *pdev, uint8_t ep_addr, u
   HAL_StatusTypeDef hal_status = HAL_OK;
   USBD_StatusTypeDef usb_status = USBD_OK;
 
+  PCD_HandleTypeDef *pcd = (PCD_HandleTypeDef *)pdev->pData;
+  if (pcd->IN_ep[ep_addr & 0x0FU].type == EP_TYPE_ISOC)
+  {
+    /* The HAL publishes the ISO count before copying PMA. With aliased slots,
+     * DIS must cover that copy; HAL validates TX only after the copy finishes.
+     */
+    PCD_SET_EP_TX_STATUS(pcd->Instance, ep_addr & 0x0FU, USB_EP_TX_DIS);
+  }
   hal_status = HAL_PCD_EP_Transmit(pdev->pData, ep_addr, pbuf, size);
 
   usb_status =  USBD_Get_USB_Status(hal_status);
 
   return usb_status;
+}
+
+uint16_t USBD_LL_GetFrameNumber(USBD_HandleTypeDef *pdev)
+{
+  PCD_HandleTypeDef *pcd = (PCD_HandleTypeDef *)pdev->pData;
+  return (uint16_t)(pcd->Instance->FNR & AUDIO_USB_FRAME_MASK);
 }
 
 /**

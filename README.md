@@ -6,7 +6,7 @@ STM32F103 blue-pill board with minimal extra hardware.
 This might be useful for projects that needs audio Linux/Windows stack for various purposes,
 like waveform generation, waveform observation, enabling audio input on old  Raspberry Pis, etc.
 
-See the section Manual verification for what is working and what is not.
+This branch contains a functioning duplex stereo USB audio card. 
 
 # STM32F103 full-duplex USB audio card
 
@@ -56,6 +56,11 @@ The build uses C11, Cortex-M3 Thumb instructions, software floating point,
 and Newlib Nano. CMake 3.22 or newer is required. This has been built with
 Debian GCC ARM 14.2.1 and binutils 2.44.
 
+Debug builds compile `audio_capture.c` and `audio_playback.c` with **`-O2`** and
+debug symbols. These real-time paths must meet a one-millisecond PWM refill
+deadline; fully unoptimized duplex audio caused clicks on hardware. Release
+uses `-Os` throughout.
+
 ## Capture path
 
 - **PA1 / ADC1_IN1:** channel 1 (left), ADC scan rank 1.
@@ -63,7 +68,7 @@ Debian GCC ARM 14.2.1 and binutils 2.44.
 - **TIM3:** 72 MHz / 1500 = 48 kHz scan trigger; ADC1 scans both channels.
 - **DMA1 channel 1:** circular buffer, with one millisecond of stereo samples
   in each half (96 halfwords per half; 192 halfwords total).
-- **USB endpoint `0x81`:** asynchronous isochronous IN, scheduled every
+- **USB endpoint `0x81`:** asynchronous isochronous IN, pre-armed for the next
   one-millisecond USB frame. Normal packets contain 192 bytes. Occasional
   188- or 196-byte packets accommodate differences between the ADC oscillator
   and the host's USB clock without discarding or duplicating samples.
@@ -151,9 +156,14 @@ packet size and whole stereo frames. Compile-time assertions check the layout.
 F103 isochronous hardware switches between two logical buffer descriptors and
 requires separate endpoint registers for IN/OUT. Both logical slots of each
 audio/feedback endpoint point to the same physical PMA buffer. The HAL's
-DTOG-aware ISO path selects the correct slot and count; IN completion clears the
-consumed slot, and SOF retires unpolled IN packets. This saves PMA but requires
-prompt copy/rearm before the next USB frame. Do not replace the alias setup with
+DTOG-aware ISO path selects the correct slot and count. Capture and feedback are
+armed at stream start and rearmed on IN completion, ahead of the next host poll.
+SOF updates the feedback estimate and retires expired, unpolled packets; the
+hardware's 11-bit frame counter distinguishes those from packets already armed
+for the current/next frame, even when completion interrupts precede SOF handling.
+IN endpoints are disabled during preparation/PMA copying, then validated after
+the copy, because the two logical slots share physical storage. This saves PMA
+but requires prompt copy/rearm before the next USB frame. Do not replace the alias setup with
 ordinary single-buffer ISO handling or allocate distinct double buffers: the
 latter does not fit. Hardware timing/continuous streaming needs verification.
 
@@ -183,7 +193,8 @@ filter, `filter.cir` SPICE simulation, and simulated audio/image response.
 Host-side tests exercise production capture, playback, and USB class code with
 hardware stubs. They check descriptors/terminal routing/PMA capacity, independent
 alternate settings and mute controls, endpoint error rollback, malformed OUT
-packets, missed IN transfers, PCM endpoints and midpoint, all 1024 PWM targets,
+packets, missed IN transfers, host polls before SOF handling, USB frame-counter
+wrap/resume, PCM endpoints and midpoint, all 1024 PWM targets,
 stereo ordering across DMA/ring/counter wraps, underrun/overflow recovery, DWT
 wrap/resume, and 60-second simulations of ±1000 ppm capture and playback drift.
 The playback simulations model a host following explicit feedback.
@@ -223,14 +234,15 @@ speaker-test -D hw:N,0 -F S16_LE -r 48000 -c 2 -t sine
 
 I've not yet build extensive filters suggested by the AI. I've tested the audio output
 with a simple RC filter with bandwidth around 20kHz (1 k resistor and 7.5 n capacitor)
- followed by simple op-amp amplifier to a headphone. The result is legible speech.
+ followed by simple op-amp amplifier to a headphone. I've played speech audiofile, the
+speech is legible and clear enough.
 
 I've also tested arecord command with a sine wave from the audio generator (shifted to 1.5 V),
 analised the result with audacity. The sine wave seems to be recorded properly.
 
-Tested the simultaneous recording and speech output, here I observed screachy sound and 
-occasional spikes in recorded sine wave. So the full duplex usage does not pass the
-manual test.
+Preliminary tests showed screachy/noisy sound when both playback and recording were 
+enabled on the debug build, the current updated code provides clean speech sound and
+ clean recording of the sinusoidal signal simultaneously. 
 
 ## STM32CubeMX regeneration
 
@@ -245,7 +257,8 @@ table in `USB_DEVICE/App/usbd_audio_if.c`, audio-card strings in `usbd_desc.c`,
 `usbd_conf.h` settings (48 kHz, three interfaces, bus-powered), and
 `USB_MAX_EP0_SIZE = 16` in the middleware's `Core/Inc/usbd_def.h`.
 Preserve `audio_usb_pma.h`, alias PMA configuration, four used endpoint registers,
-and IN logical-slot count initialization in `usbd_conf.c`. Its static allocator
+and IN logical-slot count initialization, preparation/PMA-copy gating, and the
+hardware frame-counter adapter in `usbd_conf.c`. Its static allocator
 must return an aligned `USBD_AUDIO_HandleTypeDef` with a size check.
 
 Preserve TIM1 paired-channel DMA burst setup, PWM DMA callbacks/IRQ priority,
@@ -253,3 +266,4 @@ and application startup before USB initialization. The top-level CMake file
 includes `audio_capture.c` and `audio_playback.c`. The `.ioc` records PA1/PA3
 capture, TIM3 timing, TIM1 PA8/PA9 PWM with ARR 374, DMA1 channel 5, and both USB
 interrupt vectors; it cannot express the custom PCM/PWM and USB class logic.
+Preserve the Debug audio-source optimization setting in `CMakeLists.txt`.

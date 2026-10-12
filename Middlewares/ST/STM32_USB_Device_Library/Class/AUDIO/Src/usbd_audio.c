@@ -30,6 +30,8 @@ static uint8_t USBD_AUDIO_DataIn(USBD_HandleTypeDef *pdev, uint8_t epnum);
 static uint8_t USBD_AUDIO_DataOut(USBD_HandleTypeDef *pdev, uint8_t epnum);
 static uint8_t USBD_AUDIO_SOF(USBD_HandleTypeDef *pdev);
 static uint8_t USBD_AUDIO_IsoINIncomplete(USBD_HandleTypeDef *pdev, uint8_t epnum);
+static uint8_t USBD_AUDIO_SendCapture(USBD_HandleTypeDef *pdev, uint16_t frame);
+static uint8_t USBD_AUDIO_SendFeedback(USBD_HandleTypeDef *pdev, uint16_t frame);
 static uint8_t *USBD_AUDIO_GetCfgDesc(uint16_t *length);
 static uint8_t *USBD_AUDIO_GetDeviceQualifierDesc(uint16_t *length);
 
@@ -235,6 +237,13 @@ static uint8_t USBD_AUDIO_StartPlayback(USBD_HandleTypeDef *pdev)
   pdev->ep_in[AUDIO_FEEDBACK_EP & 0x0FU].is_used = 1U;
   pdev->ep_in[AUDIO_FEEDBACK_EP & 0x0FU].maxpacket = AUDIO_FEEDBACK_BYTES;
   haudio->playback_alt_setting = 1U;
+  haudio->feedback_value = AUDIO_SAMPLES_PER_PACKET << 14;
+  if (USBD_AUDIO_SendFeedback(pdev,
+        (USBD_LL_GetFrameNumber(pdev) + 1U) & AUDIO_USB_FRAME_MASK) != USBD_OK)
+  {
+    USBD_AUDIO_StopPlayback(pdev);
+    return USBD_FAIL;
+  }
   return USBD_OK;
 }
 
@@ -338,6 +347,12 @@ static uint8_t USBD_AUDIO_Setup(USBD_HandleTypeDef *pdev, USBD_SetupReqTypedef *
           }
           pdev->ep_in[AUDIO_IN_EP & 0x0FU].is_used = 1U;
           haudio->alt_setting = 1U;
+          if (USBD_AUDIO_SendCapture(pdev,
+                (USBD_LL_GetFrameNumber(pdev) + 1U) & AUDIO_USB_FRAME_MASK) != USBD_OK)
+          {
+            USBD_AUDIO_StopCapture(pdev);
+            break;
+          }
         }
         return USBD_OK;
 
@@ -377,10 +392,21 @@ static uint8_t USBD_AUDIO_DataIn(USBD_HandleTypeDef *pdev, uint8_t epnum)
   if ((haudio != NULL) && (epnum == (AUDIO_IN_EP & 0x0FU)))
   {
     haudio->tx_busy = 0U;
+    if (haudio->alt_setting == 1U)
+    {
+      /* Prepare in the preceding frame, not in a race with the next IN token. */
+      return USBD_AUDIO_SendCapture(pdev,
+        (USBD_LL_GetFrameNumber(pdev) + 1U) & AUDIO_USB_FRAME_MASK);
+    }
   }
   else if ((haudio != NULL) && (epnum == (AUDIO_FEEDBACK_EP & 0x0FU)))
   {
     haudio->feedback_busy = 0U;
+    if (haudio->playback_alt_setting == 1U)
+    {
+      return USBD_AUDIO_SendFeedback(pdev,
+        (USBD_LL_GetFrameNumber(pdev) + 1U) & AUDIO_USB_FRAME_MASK);
+    }
   }
   return USBD_OK;
 }
@@ -404,7 +430,7 @@ static uint8_t USBD_AUDIO_DataOut(USBD_HandleTypeDef *pdev, uint8_t epnum)
   return USBD_OK;
 }
 
-static uint8_t USBD_AUDIO_SendCapture(USBD_HandleTypeDef *pdev)
+static uint8_t USBD_AUDIO_SendCapture(USBD_HandleTypeDef *pdev, uint16_t frame)
 {
   USBD_AUDIO_HandleTypeDef *haudio = (USBD_AUDIO_HandleTypeDef *)pdev->pClassData;
   uint16_t size;
@@ -430,6 +456,7 @@ static uint8_t USBD_AUDIO_SendCapture(USBD_HandleTypeDef *pdev)
     return USBD_FAIL;
   }
   haudio->tx_busy = 1U;
+  haudio->capture_frame = frame;
   if (USBD_LL_Transmit(pdev, AUDIO_IN_EP, haudio->buffer, size) != USBD_OK)
   {
     haudio->tx_busy = 0U;
@@ -438,19 +465,13 @@ static uint8_t USBD_AUDIO_SendCapture(USBD_HandleTypeDef *pdev)
   return USBD_OK;
 }
 
-static uint8_t USBD_AUDIO_SOF(USBD_HandleTypeDef *pdev)
+static uint8_t USBD_AUDIO_SendFeedback(USBD_HandleTypeDef *pdev, uint16_t frame)
 {
   USBD_AUDIO_HandleTypeDef *haudio = (USBD_AUDIO_HandleTypeDef *)pdev->pClassData;
-  if (haudio == NULL)
+  if (haudio->playback_alt_setting != 1U)
   {
     return USBD_OK;
   }
-  uint8_t status = USBD_AUDIO_SendCapture(pdev);
-  if (haudio->playback_alt_setting != 1U)
-  {
-    return status;
-  }
-  uint32_t feedback = ((USBD_AUDIO_ItfTypeDef *)pdev->pUserData)->GetFeedback();
   if (haudio->feedback_busy != 0U)
   {
     USBD_LL_CloseEP(pdev, AUDIO_FEEDBACK_EP);
@@ -463,14 +484,56 @@ static uint8_t USBD_AUDIO_SOF(USBD_HandleTypeDef *pdev)
   }
   for (uint32_t byte = 0U; byte < AUDIO_FEEDBACK_BYTES; ++byte)
   {
-    haudio->feedback[byte] = (uint8_t)(feedback >> (8U * byte));
+    haudio->feedback[byte] = (uint8_t)(haudio->feedback_value >> (8U * byte));
   }
   haudio->feedback_busy = 1U;
+  haudio->feedback_frame = frame;
   if (USBD_LL_Transmit(pdev, AUDIO_FEEDBACK_EP, haudio->feedback,
                        AUDIO_FEEDBACK_BYTES) != USBD_OK)
   {
     haudio->feedback_busy = 0U;
     return USBD_FAIL;
+  }
+  return USBD_OK;
+}
+
+static uint8_t USBD_AUDIO_FrameExpired(uint16_t now, uint16_t queued)
+{
+  /* Only the current frame or the next one can be armed. This also recovers
+   * after suspend/long gaps, without a half-counter-range ambiguity.
+   */
+  return (queued != now) && (queued != ((now + 1U) & AUDIO_USB_FRAME_MASK));
+}
+
+static uint8_t USBD_AUDIO_SOF(USBD_HandleTypeDef *pdev)
+{
+  USBD_AUDIO_HandleTypeDef *haudio = (USBD_AUDIO_HandleTypeDef *)pdev->pClassData;
+  if (haudio == NULL)
+  {
+    return USBD_OK;
+  }
+  uint16_t frame = USBD_LL_GetFrameNumber(pdev);
+  uint8_t status = USBD_OK;
+  if (haudio->playback_alt_setting == 1U)
+  {
+    /* Measure once per SOF. Completion queues the latest estimate for the next
+     * poll; SOF does not rewrite an already armed packet's aliased PMA buffer.
+     */
+    haudio->feedback_value = ((USBD_AUDIO_ItfTypeDef *)pdev->pUserData)->GetFeedback();
+  }
+  if ((haudio->alt_setting == 1U) &&
+      ((haudio->tx_busy == 0U) || USBD_AUDIO_FrameExpired(frame, haudio->capture_frame)))
+  {
+    status = USBD_AUDIO_SendCapture(pdev, frame);
+  }
+  if ((haudio->playback_alt_setting == 1U) &&
+      ((haudio->feedback_busy == 0U) ||
+       USBD_AUDIO_FrameExpired(frame, haudio->feedback_frame)))
+  {
+    if (USBD_AUDIO_SendFeedback(pdev, frame) != USBD_OK)
+    {
+      return USBD_FAIL;
+    }
   }
   return status;
 }
@@ -481,10 +544,12 @@ static uint8_t USBD_AUDIO_IsoINIncomplete(USBD_HandleTypeDef *pdev, uint8_t epnu
   if ((haudio != NULL) && (epnum == (AUDIO_IN_EP & 0x0FU)))
   {
     haudio->tx_busy = 1U; /* SOF will reset the endpoint before the next packet. */
+    haudio->capture_frame = USBD_LL_GetFrameNumber(pdev);
   }
   else if ((haudio != NULL) && (epnum == (AUDIO_FEEDBACK_EP & 0x0FU)))
   {
     haudio->feedback_busy = 1U;
+    haudio->feedback_frame = USBD_LL_GetFrameNumber(pdev);
   }
   return USBD_OK;
 }

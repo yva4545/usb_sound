@@ -35,6 +35,9 @@ static uint16_t control_length;
 static uint16_t transmitted_length;
 static uint8_t transmitted[AUDIO_IN_MAX_PACKET];
 static uint32_t irq_mask;
+static uint16_t usb_frame;
+static unsigned capture_closes;
+static unsigned feedback_closes;
 
 uint32_t __get_PRIMASK(void) { return irq_mask; }
 void __disable_irq(void) { irq_mask = 1U; }
@@ -101,7 +104,20 @@ USBD_StatusTypeDef USBD_LL_CloseEP(USBD_HandleTypeDef *dev, uint8_t ep)
   unsigned *state = endpoint_state(ep);
   assert(*state == 1U);
   *state = 0U;
+  if (ep == AUDIO_IN_EP) ++capture_closes;
+  if (ep == AUDIO_FEEDBACK_EP) ++feedback_closes;
   return USBD_OK;
+}
+uint16_t USBD_LL_GetFrameNumber(USBD_HandleTypeDef *dev)
+{
+  UNUSED(dev);
+  return usb_frame;
+}
+static uint8_t test_sof(USBD_HandleTypeDef *dev)
+{
+  usb_frame = (usb_frame + 1U) & AUDIO_USB_FRAME_MASK;
+  test_dwt.CYCCNT += 72000U;
+  return USBD_AUDIO.SOF(dev);
 }
 USBD_StatusTypeDef USBD_LL_Transmit(USBD_HandleTypeDef *dev, uint8_t ep,
                                    uint8_t *buffer, uint16_t size)
@@ -327,17 +343,18 @@ static void test_usb_lifecycle(void)
   assert(USBD_AUDIO_RegisterInterface(&dev, &callbacks) == USBD_OK);
   assert(USBD_AUDIO.Init(&dev, 0U) == USBD_OK);
   assert(endpoint_open == 0U);
-  USBD_AUDIO.SOF(&dev);
+  test_sof(&dev);
   assert(transmissions == 0U);
   assert(USBD_AUDIO.Setup(&dev, &request) == USBD_OK);
   assert(endpoint_open == 1U && dev.ep_in[1].is_used == 1U);
-  USBD_AUDIO.SOF(&dev);
+  test_sof(&dev);
   assert(transmissions == 1U && transmitted_length == 192U);
   assert_silence(transmitted, transmitted_length);
   /* No completion: the next SOF must recover rather than deadlock. */
-  USBD_AUDIO.SOF(&dev);
+  test_sof(&dev);
   assert(transmissions == 2U);
   USBD_AUDIO.DataIn(&dev, 1U);
+  assert(transmissions == 3U); /* Next packet is already armed before SOF. */
 
   request = (USBD_SetupReqTypedef){ 0xA1, USB_REQ_GET_INTERFACE, 0U, 0U, 1U };
   assert(USBD_AUDIO.Setup(&dev, &request) == USBD_FAIL); /* Wrong request type. */
@@ -363,8 +380,8 @@ static void test_usb_lifecycle(void)
   assert(USBD_AUDIO.Setup(&dev, &request) == USBD_FAIL);
   request.wValue = 0U;
   assert(USBD_AUDIO.Setup(&dev, &request) == USBD_OK && endpoint_open == 0U);
-  USBD_AUDIO.SOF(&dev);
-  assert(transmissions == 2U && dev.ep_in[1].is_used == 0U);
+  test_sof(&dev);
+  assert(transmissions == 3U && dev.ep_in[1].is_used == 0U);
   request.wValue = 1U;
   assert(USBD_AUDIO.Setup(&dev, &request) == USBD_OK);
   assert(USBD_AUDIO.DeInit(&dev, 0U) == USBD_OK);
@@ -663,15 +680,20 @@ static void test_full_duplex_usb(void)
   assert(USBD_AUDIO.Setup(&dev, &request) == USBD_FAIL);
   assert(playback_streaming == 0U && playback_endpoint_open == 0U);
   fail_receive = 0U;
+  fail_transmit_ep = AUDIO_FEEDBACK_EP;
+  assert(USBD_AUDIO.Setup(&dev, &request) == USBD_FAIL);
+  assert(playback_streaming == 0U && playback_endpoint_open == 0U &&
+         feedback_endpoint_open == 0U && dev.ep_in[3].is_used == 0U);
+  fail_transmit_ep = 0U;
   assert(USBD_AUDIO.Setup(&dev, &request) == USBD_OK);
   assert(playback_endpoint_open == 1U && feedback_endpoint_open == 1U);
   assert(endpoint_open == 0U && dev.ep_out[2].is_used == 1U && dev.ep_in[3].is_used == 1U);
-  assert(USBD_AUDIO.SOF(&dev) == USBD_OK);
+  assert(test_sof(&dev) == USBD_OK);
   assert(transmissions == capture_count && feedback_transmissions == feedback_count + 1U);
   assert(transmitted_feedback[0] == 0U && transmitted_feedback[1] == 0U &&
          transmitted_feedback[2] == 12U);
   /* An unpolled feedback packet must also recover on the next SOF. */
-  assert(USBD_AUDIO.SOF(&dev) == USBD_OK);
+  assert(test_sof(&dev) == USBD_OK);
   USBD_AUDIO.DataIn(&dev, 3U);
 
   unsigned packets = received_packets, preparations = receive_preparations;
@@ -693,19 +715,25 @@ static void test_full_duplex_usb(void)
 
   request.wIndex = 1U;
   uint32_t queued = playback_write_frame - playback_read_frame;
+  fail_transmit_ep = AUDIO_IN_EP;
+  assert(USBD_AUDIO.Setup(&dev, &request) == USBD_FAIL);
+  assert(endpoint_open == 0U && streaming == 0U && dev.ep_in[1].is_used == 0U);
+  assert(playback_endpoint_open == 1U && playback_write_frame - playback_read_frame == queued);
+  fail_transmit_ep = 0U;
   assert(USBD_AUDIO.Setup(&dev, &request) == USBD_OK);
   assert(playback_write_frame - playback_read_frame == queued);
   fill_dma(2200U, 1900U);
   for (unsigned batch = 0U; batch < 3U; ++batch) HAL_ADC_ConvHalfCpltCallback(&hadc1);
-  test_dwt.CYCCNT += 72000U;
-  assert(USBD_AUDIO.SOF(&dev) == USBD_OK);
-  assert(transmissions == capture_count + 1U && transmitted_length == 192U);
+  USBD_AUDIO.DataIn(&dev, 1U); /* Poll startup silence; pre-arm the ADC packet. */
+  assert(test_sof(&dev) == USBD_OK);
+  assert(transmissions == capture_count + 2U && transmitted_length == 192U);
   assert(le16(transmitted) == (2200U - 2048U) * 16U);
   assert(feedback_transmissions == feedback_count + 3U);
   USBD_AUDIO.DataIn(&dev, 1U);
   USBD_AUDIO.DataIn(&dev, 3U);
   fail_transmit_ep = AUDIO_FEEDBACK_EP;
-  assert(USBD_AUDIO.SOF(&dev) == USBD_FAIL);
+  assert(USBD_AUDIO.DataIn(&dev, 3U) == USBD_FAIL);
+  assert(test_sof(&dev) == USBD_FAIL);
   assert(((USBD_AUDIO_HandleTypeDef *)dev.pClassData)->feedback_busy == 0U);
   fail_transmit_ep = 0U;
   USBD_AUDIO.DataIn(&dev, 1U);
@@ -721,7 +749,7 @@ static void test_full_duplex_usb(void)
   request = (USBD_SetupReqTypedef){ 0x01, USB_REQ_SET_INTERFACE, 0U, 1U, 0U };
   assert(USBD_AUDIO.Setup(&dev, &request) == USBD_OK);
   assert(endpoint_open == 0U && playback_endpoint_open == 1U);
-  assert(USBD_AUDIO.SOF(&dev) == USBD_OK);
+  assert(test_sof(&dev) == USBD_OK);
   request.wValue = 1U;
   assert(USBD_AUDIO.Setup(&dev, &request) == USBD_OK);
   request.wValue = 0U;
@@ -731,6 +759,101 @@ static void test_full_duplex_usb(void)
   assert(streaming == 1U && playback_streaming == 0U);
   assert(USBD_AUDIO.DeInit(&dev, 0U) == USBD_OK);
   assert(endpoint_open == 0U && dev.pClassData == NULL);
+}
+
+static void test_usb_early_poll_timing(void)
+{
+  USBD_HandleTypeDef dev = { .dev_state = USBD_STATE_CONFIGURED };
+  USBD_SetupReqTypedef request = { 0x01, USB_REQ_SET_INTERFACE, 1U, 1U, 0U };
+  usb_frame = AUDIO_USB_FRAME_MASK - 1U;
+  assert(USBD_AUDIO_RegisterInterface(&dev, &callbacks) == USBD_OK);
+  assert(USBD_AUDIO.Init(&dev, 0U) == USBD_OK);
+  assert(USBD_AUDIO.Setup(&dev, &request) == USBD_OK);
+  request.wIndex = 2U;
+  assert(USBD_AUDIO.Setup(&dev, &request) == USBD_OK);
+  unsigned capture_close_count = capture_closes;
+  unsigned feedback_close_count = feedback_closes;
+  unsigned expected = 0U, produced = 0U;
+
+  /* The host may poll before the pending SOF interrupt is serviced. Both IN
+   * packets must be ready already. Vary the interrupt order and cross the
+   * hardware's 11-bit frame wrap twice, checking real PCM continuity too.
+   */
+  for (unsigned ms = 0U; ms < 4200U; ++ms)
+  {
+    usb_frame = (usb_frame + 1U) & AUDIO_USB_FRAME_MASK;
+    test_dwt.CYCCNT += 72000U;
+    for (unsigned frame = 0U; frame < AUDIO_SAMPLES_PER_PACKET; ++frame)
+    {
+      unsigned code = (produced + frame) % 512U;
+      for (unsigned half = 0U; half < 2U; ++half)
+      {
+        unsigned index = half * ADC_BATCH_SAMPLES + frame * 2U;
+        adc_dma_buffer[index] = (uint16_t)(2048U + code);
+        adc_dma_buffer[index + 1U] = (uint16_t)(2000U - code);
+      }
+    }
+    produced += AUDIO_SAMPLES_PER_PACKET;
+    HAL_ADC_ConvHalfCpltCallback(&hadc1);
+    make_playback_packet(receive_buffer, 48U, 100U, 900U);
+    receive_length = 192U;
+    assert(USBD_AUDIO.DataOut(&dev, 2U) == USBD_OK);
+    HAL_TIM_PeriodElapsedHalfCpltCallback(&htim1);
+
+    unsigned capture_count = transmissions, feedback_count = feedback_transmissions;
+    if (ms % 2U == 0U)
+    {
+      assert(USBD_AUDIO.SOF(&dev) == USBD_OK);
+      assert(transmissions == capture_count && feedback_transmissions == feedback_count);
+    }
+    assert(((USBD_AUDIO_HandleTypeDef *)dev.pClassData)->tx_busy == 1U);
+    assert(((USBD_AUDIO_HandleTypeDef *)dev.pClassData)->feedback_busy == 1U);
+    if (ms < 3U)
+    {
+      assert_silence(transmitted, transmitted_length);
+    }
+    else
+    {
+      for (unsigned frame = 0U; frame < transmitted_length / AUDIO_FRAME_BYTES; ++frame)
+      {
+        unsigned code = expected++ % 512U;
+        assert(le16(transmitted + frame * 4U) == code * 16U);
+        assert(le16(transmitted + frame * 4U + 2U) ==
+               (uint16_t)((-48 - (int32_t)code) * 16));
+      }
+    }
+    assert(USBD_AUDIO.DataIn(&dev, 1U) == USBD_OK);
+    assert(USBD_AUDIO.DataIn(&dev, 3U) == USBD_OK);
+    assert(transmissions == capture_count + 1U && feedback_transmissions == feedback_count + 1U);
+    if (ms % 2U != 0U)
+    {
+      assert(USBD_AUDIO.SOF(&dev) == USBD_OK);
+      assert(transmissions == capture_count + 1U && feedback_transmissions == feedback_count + 1U);
+    }
+    assert(capture_closes == capture_close_count && feedback_closes == feedback_close_count);
+  }
+  assert(expected > 200000U);
+
+  /* Missing a host poll retires just that packet, on the following frame. */
+  unsigned capture_count = transmissions, feedback_count = feedback_transmissions;
+  assert(test_sof(&dev) == USBD_OK);
+  assert(transmissions == capture_count && feedback_transmissions == feedback_count);
+  assert(test_sof(&dev) == USBD_OK);
+  assert(transmissions == capture_count + 1U && feedback_transmissions == feedback_count + 1U);
+  assert(capture_closes == capture_close_count + 1U &&
+         feedback_closes == feedback_close_count + 1U);
+  /* A long suspend can advance the hardware counter by more than half its
+   * range; recovery must still happen at the first SOF after resume.
+   */
+  usb_frame = (usb_frame + 1500U) & AUDIO_USB_FRAME_MASK;
+  test_dwt.CYCCNT += 108000000U;
+  assert(USBD_AUDIO.SOF(&dev) == USBD_OK);
+  assert(transmissions == capture_count + 2U && feedback_transmissions == feedback_count + 2U);
+  assert(USBD_AUDIO.IsoINIncomplete(&dev, 1U) == USBD_OK);
+  assert(USBD_AUDIO.IsoINIncomplete(&dev, 3U) == USBD_OK);
+  assert(test_sof(&dev) == USBD_OK);
+  assert(transmissions == capture_count + 3U && feedback_transmissions == feedback_count + 3U);
+  assert(USBD_AUDIO.DeInit(&dev, 0U) == USBD_OK);
 }
 
 static void test_playback_host_feedback(int ppm)
@@ -780,6 +903,7 @@ int main(void)
   test_playback_order_and_recovery();
   test_feedback_clock();
   test_full_duplex_usb();
+  test_usb_early_poll_timing();
   test_playback_host_feedback(1000);
   test_playback_host_feedback(-1000);
   assert(irq_mask == 0U);

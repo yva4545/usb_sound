@@ -108,6 +108,7 @@ extern "C" {
 /* F103 RX buffers larger than 62 bytes are allocated in 32-byte blocks. */
 #define AUDIO_OUT_BUFFER_BYTES                        ((AUDIO_OUT_MAX_PACKET + 31U) & ~31U)
 #define AUDIO_FEEDBACK_BYTES                          3U
+#define AUDIO_USB_FRAME_MASK                          0x07FFU
 #define AUDIO_DEFAULT_VOLUME                          70U
 
 /* Audio Commands enumeration */
@@ -160,6 +161,9 @@ typedef struct
   uint8_t                   feedback_busy;
   uint8_t                   mute;
   uint8_t                   playback_mute;
+  uint16_t                  capture_frame;
+  uint16_t                  feedback_frame;
+  uint32_t                  feedback_value;
   USBD_AUDIO_ControlTypeDef control;
 }
 USBD_AUDIO_HandleTypeDef;
@@ -211,6 +215,9 @@ uint8_t  USBD_AUDIO_RegisterInterface(USBD_HandleTypeDef *pdev,
                                       USBD_AUDIO_ItfTypeDef *fops);
 
 void  USBD_AUDIO_Sync(USBD_HandleTypeDef *pdev, AUDIO_OffsetTypeDef offset);
+
+/* Read the hardware frame counter, including when CTR is handled before SOF. */
+uint16_t USBD_LL_GetFrameNumber(USBD_HandleTypeDef *pdev);
 /**
   * @}
   */
