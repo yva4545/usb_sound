@@ -51,7 +51,7 @@ extern "C" {
 #endif /* USBD_AUDIO_FREQ */
 
 #define AUDIO_IN_EP                                   0x81U
-#define USB_AUDIO_CONFIG_DESC_SIZ                     0x6FU
+#define USB_AUDIO_CONFIG_DESC_SIZ                     0x72U
 #define AUDIO_INTERFACE_DESC_SIZE                     0x09U
 #define USB_AUDIO_DESC_SIZ                            0x09U
 #define AUDIO_STANDARD_ENDPOINT_DESC_SIZE             0x09U
@@ -83,6 +83,7 @@ extern "C" {
 
 #define AUDIO_FORMAT_TYPE_I                           0x01U
 #define AUDIO_FORMAT_TYPE_III                         0x03U
+#define AUDIO_FORMAT_PCM8                             0x0002U
 
 #define AUDIO_ENDPOINT_GENERAL                        0x01U
 
@@ -92,12 +93,13 @@ extern "C" {
 #define AUDIO_FEATURE_UNIT_ID                         0x02U
 
 
-#define AUDIO_CHANNELS                                3U
-#define AUDIO_BYTES_PER_SAMPLE                        2U
+#define AUDIO_CHANNELS                                6U
+#define AUDIO_BYTES_PER_SAMPLE                        1U
+#define AUDIO_SILENCE                                 0x80U
 #define AUDIO_FRAME_BYTES                             (AUDIO_CHANNELS * AUDIO_BYTES_PER_SAMPLE)
 #define AUDIO_SAMPLES_PER_PACKET                      (USBD_AUDIO_FREQ / 1000U)
 #define AUDIO_IN_PACKET                               (AUDIO_SAMPLES_PER_PACKET * AUDIO_FRAME_BYTES)
-/* An asynchronous source occasionally sends one extra three-channel sample frame. */
+/* An asynchronous source occasionally sends one extra six-channel sample frame. */
 #define AUDIO_IN_MAX_PACKET                           ((AUDIO_SAMPLES_PER_PACKET + 1U) * AUDIO_FRAME_BYTES)
 #define AUDIO_DEFAULT_VOLUME                          70U
 

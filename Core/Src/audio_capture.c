@@ -10,13 +10,14 @@
 #define CAPTURE_JITTER_FRAMES (AUDIO_SAMPLES_PER_PACKET / 2U)
 
 _Static_assert(USBD_AUDIO_FREQ == 48000U, "TIM3 is configured for 48 kHz capture");
-_Static_assert(AUDIO_CHANNELS == 3U, "ADC1 scans three input channels");
+_Static_assert(AUDIO_CHANNELS == 6U, "ADC1 scans six input channels");
+_Static_assert(AUDIO_BYTES_PER_SAMPLE == 1U, "Capture produces unsigned 8-bit PCM");
 
-/* DMA stores interleaved PA1 (left), PA3 (right), PA2 (center) 12-bit samples
- * in two 1-ms halves, each holding 48 three-channel frames (144 halfwords).
+/* DMA stores interleaved PA1 through PA6 12-bit samples in ascending pin order
+ * in two 1-ms halves, each holding 48 six-channel frames (288 halfwords).
  */
 _Alignas(4) static uint16_t adc_dma_buffer[2U * ADC_BATCH_SAMPLES];
-static int16_t capture_ring[CAPTURE_RING_FRAMES * AUDIO_CHANNELS];
+static uint8_t capture_ring[CAPTURE_RING_FRAMES * AUDIO_CHANNELS];
 static uint32_t read_frame;
 static uint32_t write_frame;
 static uint8_t streaming;
@@ -67,11 +68,9 @@ static void AudioCapture_PushSamples(const uint16_t *samples)
       uint32_t index = ((write_frame + frame) % CAPTURE_RING_FRAMES) * AUDIO_CHANNELS;
       for (uint32_t channel = 0U; channel < AUDIO_CHANNELS; ++channel)
       {
-        /* A mid-supply input (ADC code 2048) is PCM zero, not -32768.
-         * Multiplication avoids left-shifting negative signed integers.
-         */
+        /* Keep the top eight ADC bits: 0 -> 0, 2048 -> 128, 4095 -> 255. */
         capture_ring[index + channel] =
-          (int16_t)(((int32_t)samples[frame * AUDIO_CHANNELS + channel] - 2048) * 16);
+          (uint8_t)(samples[frame * AUDIO_CHANNELS + channel] >> 4);
       }
     }
     write_frame += AUDIO_SAMPLES_PER_PACKET;
@@ -98,7 +97,7 @@ uint16_t AudioCapture_GetPacket(uint8_t *packet, uint16_t capacity)
    */
   if ((streaming == 0U) || ((primed == 0U) && (available < CAPTURE_TARGET_FRAMES)))
   {
-    memset(packet, 0, AUDIO_IN_PACKET);
+    memset(packet, AUDIO_SILENCE, AUDIO_IN_PACKET);
     __set_PRIMASK(irq_state);
     return AUDIO_IN_PACKET;
   }
@@ -119,7 +118,7 @@ uint16_t AudioCapture_GetPacket(uint8_t *packet, uint16_t capacity)
   {
     /* Re-prime after a real underrun rather than sending partial audio frames. */
     primed = 0U;
-    memset(packet, 0, AUDIO_IN_PACKET);
+    memset(packet, AUDIO_SILENCE, AUDIO_IN_PACKET);
     __set_PRIMASK(irq_state);
     return AUDIO_IN_PACKET;
   }
@@ -128,10 +127,8 @@ uint16_t AudioCapture_GetPacket(uint8_t *packet, uint16_t capacity)
     uint32_t index = ((read_frame + frame) % CAPTURE_RING_FRAMES) * AUDIO_CHANNELS;
     for (uint32_t channel = 0U; channel < AUDIO_CHANNELS; ++channel)
     {
-      uint16_t sample = (muted != 0U) ? 0U : (uint16_t)capture_ring[index + channel];
-      uint32_t byte = frame * AUDIO_FRAME_BYTES + channel * AUDIO_BYTES_PER_SAMPLE;
-      packet[byte] = (uint8_t)sample;
-      packet[byte + 1U] = (uint8_t)(sample >> 8);
+      packet[frame * AUDIO_FRAME_BYTES + channel] =
+        (muted != 0U) ? AUDIO_SILENCE : capture_ring[index + channel];
     }
   }
   read_frame += frames; /* Consume samples even when muted. */
